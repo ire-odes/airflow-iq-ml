@@ -7,6 +7,18 @@ data/MERV1_CLEAN vs data/FPR12, shaded by +/-1 SEM across clips.
 Same idea/style as analyze_frequency_response.py (which compares
 FPR5 vs FPR12 from features.csv), applied to the MERV1_CLEAN/FPR12 pair
 plot_drift_features.py already used, with the CLEAN/DIRTY legend labels
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[1]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 from that same comparison.
 
 Usage:
@@ -25,7 +37,7 @@ import pandas as pd
 
 from extract_features_v2 import SR, FMIN, FMAX, N_FFT_BINS, fft_band_features
 
-CACHE_PATH = Path("fft_band_comparison.csv")
+CACHE_PATH = Path("results/tables/fft_band_comparison.csv")
 
 GROUPS = [
     ("data/MERV1_CLEAN", "CLEAN"),
@@ -93,7 +105,7 @@ def main():
     ax.grid(True, alpha=0.3)
     ax.legend(frameon=False)
     fig.tight_layout()
-    fig.savefig("frequency_response_MERV1_vs_FPR12.png")
+    fig.savefig("results/figures/frequency_response_MERV1_vs_FPR12.png")
     print("\nSaved fft_band_comparison.csv, frequency_response_MERV1_vs_FPR12.png")
 
 

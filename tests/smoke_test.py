@@ -9,6 +9,18 @@ Then: extract -> train RF -> simulate a device through the
 FilterHealthMonitor (clean warmup -> gradual clogging).
 """
 
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[1]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 import subprocess
 from pathlib import Path
 
@@ -62,7 +74,7 @@ def simulate_device():
     from drift_detector import (FilterHealthMonitor, calibrate_threshold,
                                 BaselineProfile, DEFAULT_DRIFT_FEATURES)
 
-    bundle = joblib.load("model_bundle.pkl")
+    bundle = joblib.load("models/model_bundle.pkl")
     model = bundle["classifier"]
     le = bundle["label_encoder"]
     sel = bundle["selected_features"]

@@ -11,3 +11,5 @@ tools/
 backups/
 # Scratch output from tests/smoke_test.py
 caldata/
+# Logs appended live by the experiment collectors
+service/*.csv

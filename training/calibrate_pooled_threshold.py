@@ -27,6 +27,18 @@ Example (lab rig + one real house, pooled):
 Output: pooled_calibration.json -- read by build_baseline.py whenever a new
 customer install has no dirty data to calibrate against.
 """
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[1]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 import json
 import sys
 from datetime import datetime, timezone
@@ -41,7 +53,7 @@ from drift_detector import (BaselineProfile, calibrate_threshold,
 
 WARMUP_FRACTION = 0.7
 CLEAN_PERCENTILE = 95.0
-OUT_PATH = "pooled_calibration.json"
+OUT_PATH = "models/pooled_calibration.json"
 
 
 def vec(feats):

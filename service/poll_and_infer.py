@@ -89,8 +89,8 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
 BUCKET = "hvac-recordings"
 
-BUNDLE_PATH = ROOT / "model_bundle.pkl"
-POOLED_CALIBRATION_PATH = ROOT / "pooled_calibration.json"
+BUNDLE_PATH = ROOT / "models" / "model_bundle.pkl"
+POOLED_CALIBRATION_PATH = ROOT / "models" / "pooled_calibration.json"
 
 N_DRIFT_FEATURES = len(DEFAULT_DRIFT_FEATURES)
 MIN_BASELINE_SAMPLES = 120
@@ -113,14 +113,11 @@ MIN_BASELINE_SPAN_SECONDS = 20 * 3600
 # exists to guarantee, so each one carries the device, the date and the reason,
 # and is meant to be deleted once its experiment is over.
 #
-# P3 (2026-09-17): flashed with the burst-mode firmware and recalibrated today;
-# 16h lets its baseline close tomorrow morning so blower-burst testing can
-# start a day earlier. At the 60s calibration interval it banks its 120 samples
-# within the first couple of hours, so the span is the only binding constraint
-# and shortening it is what actually moves the finish line. REVERT AFTER.
-BASELINE_SPAN_OVERRIDE_SECONDS = {
-    "58E6C5204B28": 16 * 3600,      # P3 -- burst-mode test, remove when done
-}
+# Add an entry as  "MAC": hours * 3600,  # device -- date -- reason
+#
+# History: P3 ran at 16h for the 2026-09-17 burst-mode test and froze its
+# baseline on 2026-09-18 at 528 samples; its entry was removed the same day.
+BASELINE_SPAN_OVERRIDE_SECONDS = {}
 
 
 def baseline_span_seconds(device_mac):

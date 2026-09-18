@@ -12,6 +12,18 @@ Expects two chronologically-ordered folders of clips under a house dir:
 Usage:
   python run_house_baseline.py AbrahamHouse MERV10 FPR12
 """
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[1]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 import sys
 from pathlib import Path
 
@@ -26,7 +38,7 @@ MIN_BASELINE_SAMPLES = 40  # short real-world test run, not the full ~2h warmup
 
 
 def build_classifier_fn():
-    bundle = joblib.load("model_bundle.pkl")
+    bundle = joblib.load("models/model_bundle.pkl")
     model = bundle["classifier"]
     le = bundle["label_encoder"]
     sel = bundle["selected_features"]

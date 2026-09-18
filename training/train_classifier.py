@@ -20,6 +20,18 @@ Outputs: model_bundle.pkl -- a single dict {classifier, label_encoder,
          why that matters -- it wasn't always one file).
 """
 
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[1]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 import os
 
 import joblib
@@ -36,7 +48,7 @@ RANDOM_STATE = 42
 DIRTY_LABEL = "FPR12"   # positive class for FP/FN accounting
 
 
-def load_data(path="features.csv"):
+def load_data(path="results/features/features.csv"):
     df = pd.read_csv(path)
     meta_cols = ["label", "file", "session"]
     LOUDNESS_COLS = ["mfcc0_mean", "mfcc0_std", "rms_mean", "rms_std"]
@@ -162,9 +174,9 @@ def main():
         "feature_cols": feature_cols,        # extraction order
         "selected_features": final_features,  # what model eats
     }
-    tmp_path = "model_bundle.pkl.tmp"
+    tmp_path = "models/model_bundle.pkl.tmp"
     joblib.dump(bundle, tmp_path)
-    os.replace(tmp_path, "model_bundle.pkl")
+    os.replace(tmp_path, "models/model_bundle.pkl")
     print("\nSaved model_bundle.pkl (classifier, label_encoder, feature_cols, selected_features)")
 
 

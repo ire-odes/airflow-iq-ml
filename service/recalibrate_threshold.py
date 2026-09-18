@@ -54,7 +54,7 @@ load_dotenv(Path(__file__).resolve().parent / ".env")
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
-POOLED_PATH = ROOT / "pooled_calibration.json"
+POOLED_PATH = ROOT / "models" / "pooled_calibration.json"
 
 # Below this many post-freeze readings a percentile is too noisy to trust --
 # P11 had 75 samples and a p99 of 3.67 against a p50 of 1.38, which is an

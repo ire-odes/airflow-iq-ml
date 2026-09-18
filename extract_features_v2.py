@@ -204,7 +204,7 @@ def build_dataset():
             rows.append(feats)
 
     df = pd.DataFrame(rows)
-    df.to_csv("features.csv", index=False)
+    df.to_csv("results/features/features.csv", index=False)
     n_sessions = df.groupby("label")["session"].nunique()
     print(f"\nSaved {len(df)} rows to features.csv")
     print(f"Sessions per class:\n{n_sessions}")

@@ -4,6 +4,18 @@ Trains a RandomForest to classify FPR5 vs FPR12 from extracted features,
 using a session-grouped split so clips from the same recording session
 never appear in both train and test.
 """
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[2]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 import pandas as pd
 import numpy as np
 import joblib
@@ -12,7 +24,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
 
-df = pd.read_csv("features.csv")
+df = pd.read_csv("results/features/features.csv")
 
 feature_cols = [c for c in df.columns if c not in ("label", "file", "session")]
 X = df[feature_cols].values
@@ -74,7 +86,7 @@ importances = pd.Series(clf.feature_importances_, index=feature_cols)
 print("\nTop 10 features:")
 print(importances.sort_values(ascending=False).head(10))
 
-joblib.dump(clf, "fpr_classifier.pkl")
-joblib.dump(le, "label_encoder.pkl")
-joblib.dump(feature_cols, "feature_cols.pkl")
+joblib.dump(clf, "models/legacy/fpr_classifier.pkl")
+joblib.dump(le, "models/legacy/label_encoder.pkl")
+joblib.dump(feature_cols, "models/legacy/feature_cols.pkl")
 print("\nSaved model to fpr_classifier.pkl")

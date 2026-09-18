@@ -23,6 +23,18 @@ measurably worse estimate once real calibration data exists.
 Usage:
   python build_baseline.py <house_dir> <clean_subfolder> [dirty_subfolder]
 """
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[1]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 import json
 import sys
 from pathlib import Path
@@ -37,7 +49,7 @@ from drift_detector import (BaselineProfile, DriftDetector,
 
 DATA_DIR = Path("data")
 CALIBRATION_HOLDOUT_FRACTION = 0.3
-POOLED_CALIBRATION_PATH = "pooled_calibration.json"
+POOLED_CALIBRATION_PATH = "models/pooled_calibration.json"
 
 
 def vec(feats):
@@ -126,7 +138,7 @@ def main():
 
     detector = DriftDetector(baseline, threshold, alpha=0.15, patience=3)
 
-    out_path = f"baseline_{house}.pkl"
+    out_path = f"models/baseline_{house}.pkl"
     joblib.dump(detector, out_path)
     print(f"\nSaved frozen baseline + detector to {out_path}")
 

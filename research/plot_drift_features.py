@@ -15,6 +15,18 @@ Caches per-clip features to drift_feature_comparison.csv so re-plotting
 doesn't require re-extracting from ~3000 wav files every time; delete
 that file to force a fresh extraction.
 """
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[1]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 from pathlib import Path
 
 import librosa
@@ -25,7 +37,7 @@ import pandas as pd
 from drift_detector import DEFAULT_DRIFT_FEATURES
 from extract_features_v2 import SR, librosa_features
 
-CACHE_PATH = Path("drift_feature_comparison.csv")
+CACHE_PATH = Path("results/tables/drift_feature_comparison.csv")
 
 GROUPS = [
     ("data/MERV1_CLEAN", "CLEAN"),
@@ -92,7 +104,7 @@ def main():
                 transform=ax.transAxes, ha="center", fontsize=9, color="#555")
 
         fig.tight_layout()
-        out = f"drift_feature_{feat}.png"
+        out = f"results/figures/drift_feature_{feat}.png"
         fig.savefig(out, dpi=150)
         plt.close(fig)
         print(f"saved {out}")

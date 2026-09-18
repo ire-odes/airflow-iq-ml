@@ -12,13 +12,25 @@ encoder, and feature lists together, so they can never individually go
 stale relative to each other the way 4 separate files could (see
 train_classifier.py's persist step for why that used to happen).
 """
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[1]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 import sys
 
 import joblib
 
 from extract_features_v2 import extract_features
 
-BUNDLE_PATH = "model_bundle.pkl"
+BUNDLE_PATH = "models/model_bundle.pkl"
 
 # Raw dataset labels are Filter Performance Ratings used as clean/dirty
 # proxies while collecting audio (see train_classifier.py: DIRTY_LABEL =

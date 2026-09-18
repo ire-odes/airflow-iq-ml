@@ -10,6 +10,18 @@ Usage:
 Caches per-clip band energies to fft_band_comparison_abrahamhouse.csv;
 delete it to force re-extraction.
 """
+# -- run from the project root, wherever this file lives ------------------
+# Moved out of the project root in the 2026-09-18 reorganisation. Its paths
+# are written relative to the root and the core modules (extract_features_v2,
+# drift_detector, spectrum_viz) live there, so put the root on sys.path and
+# make it the working directory before anything else runs.
+import os as _os, sys as _sys
+from pathlib import Path as _Path
+_ROOT = _Path(__file__).resolve().parents[1]
+_sys.path.insert(0, str(_ROOT))
+_os.chdir(_ROOT)
+# --------------------------------------------------------------------------
+
 from pathlib import Path
 
 import librosa
@@ -21,7 +33,7 @@ import pandas as pd
 
 from extract_features_v2 import SR, FMIN, FMAX, N_FFT_BINS, fft_band_features
 
-CACHE_PATH = Path("fft_band_comparison_abrahamhouse.csv")
+CACHE_PATH = Path("results/tables/fft_band_comparison_abrahamhouse.csv")
 
 GROUPS = [
     ("data/AbrahamHouse/MERV10", "CLEAN"),
@@ -87,9 +99,9 @@ def main():
     ax.grid(True, alpha=0.3)
     ax.legend(frameon=False)
     fig.tight_layout()
-    fig.savefig("frequency_response_AbrahamHouse_MERV10_vs_FPR12.png")
+    fig.savefig("results/figures/frequency_response_AbrahamHouse_MERV10_vs_FPR12.png")
     print("\nSaved fft_band_comparison_abrahamhouse.csv, "
-          "frequency_response_AbrahamHouse_MERV10_vs_FPR12.png")
+          "results/figures/frequency_response_AbrahamHouse_MERV10_vs_FPR12.png")
 
 
 if __name__ == "__main__":
