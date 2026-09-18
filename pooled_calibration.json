@@ -1,0 +1,27 @@
+{
+  "threshold": 3.515,
+  "drift_features": [
+    "low_freq_energy_ratio",
+    "centroid_mean",
+    "rolloff_mean",
+    "flatness_mean",
+    "bandwidth_mean"
+  ],
+  "alpha": 0.15,
+  "patience": 3,
+  "clean_percentile": 95.0,
+  "pooled_fp_rate": 0.05263157894736842,
+  "pooled_detection_rate": 0.5802469135802469,
+  "n_sites": 1,
+  "sites": [
+    {
+      "clean_dir": "data/AbrahamHouse/MERV10",
+      "dirty_dir": "data/AbrahamHouse/FPR12",
+      "n_clean": 62,
+      "n_dirty": 81,
+      "own_threshold": 2.341336741419201
+    }
+  ],
+  "calibrated_at": "2026-07-22T15:51:16.479613+00:00",
+  "calibrated_from": "live per-device EWMA p99 x 1.1 across 7 devices; median taken for devices with no baseline yet"
+}

@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+service/.env
+
+# Raw audio corpora -- thousands of wavs, kept out of history
+data/
+# Portable Node runtime for the web build
+tools/
+# Database exports taken during cleanups
+backups/
+# Scratch output from tests/smoke_test.py
+caldata/
