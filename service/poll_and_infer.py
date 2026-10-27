@@ -82,6 +82,9 @@ from extract_features_v2 import extract_features, SR
 from drift_detector import (FilterHealthMonitor, DEFAULT_DRIFT_FEATURES,
                             threshold_from_baseline)
 from spectrum_viz import compute_spectrum
+import gate_threshold
+import blower_signature
+import shadow_mfcc
 
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
@@ -206,6 +209,164 @@ SPECTRAL_GATE_ENABLED = True
 SPECTRAL_GATE_EXCLUDE_MACS = set()   # opt a device out here if it ever needs it
 SPECTRAL_GATE_MIN_MEDIAN_DB = 2.5
 
+# WHY AN ABSOLUTE CUT CANNOT SERVE THE FLEET, and what replaced it.
+#
+# The rule above compares one number against every installation. That only
+# works while every installation sounds alike, and they do not. A device in a
+# house hears its blower through duct walls and structure, which strips the
+# high end and drops the whole curve:
+#
+#   median of all 72 bins      median above 500 Hz
+#   P6 house, blower ON    +5.5                -24.3
+#   rig IdleHVAC, blower OFF   -0.4                -13.7
+#   P10 house, ON (its own baseline average)  about -24 overall
+#
+# P10's RUNNING blower is quieter than the 2.5 dB cut, so from 17 Sep -- when
+# the gate went fleet-wide -- every P10 clip was discarded and it produced no
+# readings at all. Measured on a house unit, an upper-frequency cut is worse
+# still: P6 running sits 10 dB BELOW a rig that is switched off, so no cut in
+# that band can separate them either.
+#
+# What does separate them is asking a different question: not "is this clip
+# loud?" but "does this clip look like THIS device when its blower runs?".
+# Every device already stores that reference -- baseline_spectrum_db, the
+# averaged spectrum of the clips its own calibration accepted. Scoring a clip
+# as the median difference from that curve, per site:
+#
+#                         blower ON            blower OFF
+#   P6 (house)      0.0 dB  [-0.9, +0.8]   -34.1 dB  [-40.3, -24.0]
+#   rig            +0.1 dB  [-2.4, +1.4]   -10.2 dB  [-11.7,  -8.3]
+#   FiltSure       -1.9 dB  [-3.0, +0.6]   -47.9 dB  [-48.9, -20.3]
+#
+# Running clips land within about 3 dB of their own baseline; silent ones fall
+# at least 8 dB below it. -6 dB sits in that gap at every site measured, and
+# needs no per-device tuning because the reference is already per-device.
+SPECTRAL_GATE_REL_CUT_DB = -6.0
+
+# Below this many accumulated spectra the reference is too noisy to judge
+# against, and the absolute cut is used instead. A device therefore has to
+# clear the absolute cut often enough to build its first reference -- which is
+# a real limitation for a quiet site starting from scratch (see docs).
+SPECTRAL_GATE_REL_MIN_SAMPLES = 20
+
+# UPPER BOUND: too loud to be this device's blower.
+#
+# Every rule above asks "is this loud enough?" and nothing asks "is this too
+# loud?". That asymmetry is the hole: a vacuum, a piano, a passing truck --
+# anything that clears the boundary is admitted as the blower, scored, and fed
+# into the baseline as an example of normal.
+#
+# A blower is a fixed machine running at a fixed distance from a fixed
+# microphone, so its level barely moves. Measured on P3's own clips against
+# its own baseline (150 clips, 2026-10-15):
+#
+#   P3 own clips (its real blower)   p5 +2.7   median +3.3   p95 +4.1   max +4.7
+#   rig IdleHVAC (HVAC off)          p5 +9.0   median +10.1             max +11.0
+#   rig FPR12    (another site)      p5 +18.5  median +20.6             max +23.3
+#
+# The real blower occupies a 2 dB band; everything that is not it sits 9 dB or
+# more above. +8 keeps 100% of P3's genuine clips with 3.3 dB of headroom over
+# its loudest, and rejects 100% of both impostor sets. The headroom matters for
+# a multi-speed blower stepping up a gear -- that is a real clip and must not
+# be vetoed, which is why this is not set tighter at +6.
+#
+# VALIDATED ON CROSS-SITE AUDIO, NOT ON THE ACTUAL NUISANCES. There are no
+# piano, vacuum or dog recordings in the archive, so "another installation's
+# audio" is the stand-in for "a sound that is not this blower". It is a
+# reasonable proxy and it is not proof. Collect real interference before
+# trusting this to catch a vacuum.
+SPECTRAL_GATE_REL_MAX_DB = 8.0
+
+
+def too_loud_for_blower(spec, baseline_spec, baseline_n):
+    """(vetoed, note). A VETO ONLY -- it can turn an 'on' into 'off', never
+    the reverse, so no clip the old rules rejected becomes admitted by it.
+
+    Silent when the device has no usable baseline yet, which is the same
+    condition the relative rule uses: with nothing to compare against there is
+    no such thing as 'too loud for this device'."""
+    if baseline_spec is None or baseline_n < SPECTRAL_GATE_REL_MIN_SAMPLES:
+        return False, None
+    offset = float(np.median(np.asarray(spec, dtype=float)
+                             - np.asarray(baseline_spec, dtype=float)))
+    if offset <= SPECTRAL_GATE_REL_MAX_DB:
+        return False, None
+    return True, (f"{offset:+.1f} dB ABOVE its own baseline of {baseline_n} clips "
+                  f"(cap {SPECTRAL_GATE_REL_MAX_DB:+.0f}) -- too loud to be this "
+                  f"blower, treating as interference")
+
+
+# WHEN LEVEL CANNOT WORK AT ALL, however it is calibrated.
+#
+# Every rule below asks how loud a clip is -- absolutely, relative to a
+# baseline, or relative to a learned boundary. All three assume the blower is
+# the loudest thing the device hears. That assumption holds for a device strapped
+# to the air handler. It fails for one mounted near a register, which hears
+# AIRFLOW rather than motor rumble. Measured at Kannan House (P5) against
+# clips labelled by hand on 2026-10-04:
+#
+#   octave band      20-60   60-125  125-250  250-500  500-1k   1-2k   2-8k
+#   P5 on vs off      -0.7     +4.0     +4.3     +8.4   +12.8   +7.9    +0.7
+#   P3 on vs off     +24.4    +24.4    +25.7    +29.2   +27.9  +18.3    +9.6
+#
+# P5's blower moves the broadband median by a couple of dB while a television
+# moves it more, so NO level threshold can separate them -- P5 learned a
+# perfectly valid-looking -27.3 dB boundary that fired on household noise.
+# ML/blower_signature.py asks about shape instead, and is listed per MAC
+# because the 445 Hz blade-pass tone belongs to one specific blower.
+#
+# Thresholds rest on five hand labels plus a run-coherence test, not a
+# labelled corpus. Opt a device in only with labels of its own.
+SHAPE_GATE_MACS = {
+    "E4B3238E6B10",   # P5, Kannan House -- register-mounted, see above
+}
+
+
+def blower_is_on(spec, baseline_spec, baseline_n, gate_hist=None, stored_boundary=None,
+                 y=None, sr=None, device_mac=None):
+    """(is_on, note). Four rules, most device-specific first:
+
+      0. SHAPE    -- for devices in SHAPE_GATE_MACS, the spectral shape of
+         their own blower rather than its loudness. The only rule that works
+         when the blower is not the loudest thing in the room.
+      1. LEARNED  -- a boundary fitted to this device's own clip history
+         (ML/gate_threshold.py). Preferred because it is calibrated per device
+         and, unlike rule 2, it learns from every clip rather than only the
+         ones that already passed the gate.
+      2. RELATIVE -- this clip against the device's own baseline spectrum.
+         Kept for devices that banked a baseline before gate history existed,
+         so their behaviour does not change the moment this ships.
+      3. ABSOLUTE -- the fleet-wide cut. Correct only for hardware at the gain
+         it was measured on, and the reason P3 discarded 82 straight wakes as
+         silent while its blower was audibly running.
+    """
+    level = float(np.median(np.asarray(spec, dtype=float)))
+
+    # The veto runs before every rule, so it protects the shape gate too.
+    vetoed, veto_note = too_loud_for_blower(spec, baseline_spec, baseline_n)
+    if vetoed:
+        return False, f"interference: {veto_note}", None
+
+    if device_mac in SHAPE_GATE_MACS and y is not None:
+        on, why = blower_signature.blower_is_on(y, sr if sr is not None else SR)
+        return on, f"shape gate -- {why}", None
+
+    boundary, why, fresh = gate_threshold.learn_boundary(gate_hist or [], stored_boundary)
+    if boundary is not None:
+        return (level > boundary,
+                f"{level:+.1f} dB vs its own learned boundary {boundary:+.1f} dB [{why}]",
+                boundary if fresh else None)
+
+    if baseline_spec is not None and baseline_n >= SPECTRAL_GATE_REL_MIN_SAMPLES:
+        offset = float(np.median(np.asarray(spec, dtype=float)
+                                 - np.asarray(baseline_spec, dtype=float)))
+        return (offset > SPECTRAL_GATE_REL_CUT_DB,
+                f"{offset:+.1f} dB vs its own baseline of {baseline_n} clips "
+                f"(cut {SPECTRAL_GATE_REL_CUT_DB:+.1f}; {why})", None)
+
+    return (level > SPECTRAL_GATE_MIN_MEDIAN_DB,
+            f"{level:+.1f} dB absolute (cut {SPECTRAL_GATE_MIN_MEDIAN_DB:+.1f}; {why})", None)
+
 
 def spectral_gate_applies(device_mac):
     """True when this device's clips must clear the silence gate."""
@@ -232,6 +393,11 @@ def spectral_gate_applies(device_mac):
 # packet would thrash between 60s and the slow interval.
 BLOWER_BURST_MACS = {
     "58E6C5204B28",      # P3
+    "E4B3238E6A04",      # P7   (added 2026-09-18, v2 firmware)
+    "E4B3238FAA98",      # P12  (added 2026-09-18)
+    "E4B3238FAAE0",      # P6   (added 2026-09-23, burst firmware under test)
+    "E4B3238E6B10",      # P5 - 135 Shore (added 2026-09-23; inert until it has
+                         #      a reference spectrum -- see the gate notes)
 }
 BLOWER_BURST_MINUTES = 3
 
@@ -297,6 +463,15 @@ AUTO_THRESHOLD_MARGIN = 1.10
 #      sensitive, so it needs no ceiling -- only the floor below.
 ADAPTIVE_THRESHOLD = True
 
+# Devices where adaptation is OFF. A threshold that moves during a labelled
+# experiment makes the result unreadable: a filter swap and a drifting
+# tolerance both show up as "the distance changed relative to the threshold",
+# and they cannot be told apart afterwards. Remove the entry when the
+# experiment ends -- environmental tracking is wanted the rest of the time.
+#
+#   58E6C5204B28  P3 -- FPR9 -> FPR12 swap experiment, from 2026-10-21
+ADAPTIVE_THRESHOLD_EXCLUDE_MACS = {"58E6C5204B28"}
+
 # How many post-freeze readings must exist before adapting at all. Below this
 # the percentile is being read off too few points to mean anything.
 ADAPTIVE_MIN_READINGS = 50
@@ -318,11 +493,23 @@ ADAPTIVE_MARGIN = 1.10
 # only the first one in each window actually writes.
 ADAPTIVE_UPDATE_HOURS = 6
 
-# The ceiling, as a multiple of the calibration-time threshold. 1.25 comfortably
-# covers seasonal drift -- across this fleet the spread between the tightest and
-# widest baseline is 3.6x, so a quarter is generous for one device over time --
-# while capping how far a clogging filter can push its own goalposts.
-ADAPTIVE_MAX_RISE = 1.25
+# The ceiling, as a multiple of the calibration-time threshold.
+#
+# WAS 1.25, TIGHTENED 2026-10-21 ON EVIDENCE. P3's last calibration ran its
+# threshold up in six consecutive upward steps and then sat pinned at the top:
+#
+#   3.383 -> 3.452 -> 3.532 -> 3.696 -> 3.893 -> 4.121 -> 4.397
+#   anchor 3.518, ceiling 3.518 * 1.25 = 4.397   <- exactly where it stopped
+#
+# Pinned at the ceiling means adaptation wanted to go further and only the
+# clamp stopped it -- i.e. the MERV was loading faster than 1.25 assumed, and
+# a quarter of the detection margin had been handed to the thing being
+# detected. The filter was visibly dirty when it came out.
+#
+# 1.15 still absorbs seasonal drift (the fleet's baselines differ by 3.6x, but
+# that is BETWEEN devices; one device across a season moves far less), and
+# downward moves stay unbounded, so tightening costs nothing in sensitivity.
+ADAPTIVE_MAX_RISE = 1.15
 
 # Floor, as a multiple of the same anchor. Stops a spell of unusually quiet
 # readings from ratcheting the threshold down to where ordinary noise flags.
@@ -574,7 +761,7 @@ def baseline_row_exists(sb, device_mac):
 
 
 def load_monitor(sb, device_mac, classifier_fn, row=None):
-    """Returns (monitor, spectrum_mean, spectrum_n, had_row).
+    """Returns (monitor, spectrum_mean, spectrum_n, gate_hist, gate_boundary, had_row).
 
     had_row records whether a baseline row existed when this cycle started.
     save_monitor() uses it to detect a recalibration that landed mid-cycle
@@ -597,6 +784,12 @@ def load_monitor(sb, device_mac, classifier_fn, row=None):
         spectrum_mean = np.array(row["baseline_spectrum_db"], dtype=float)
         spectrum_n = row.get("spectrum_n", 0) or 0
 
+    # Deliberately NOT conditional on baseline_mean: a device in cold_start has
+    # no baseline but still needs its gate history, and that is precisely the
+    # device the old rule stranded.
+    gate_hist = list((row or {}).get("gate_recent_db") or [])
+    gate_boundary = (row or {}).get("gate_boundary_db")
+
     if not row or row.get("baseline_mean") is None:
         mon = FilterHealthMonitor(classifier_fn, min_baseline_samples=MIN_BASELINE_SAMPLES,
                                   drift_threshold=default_threshold(),
@@ -605,7 +798,7 @@ def load_monitor(sb, device_mac, classifier_fn, row=None):
                                   recent_exceedance_limit=None,
                                   auto_threshold_quantile=AUTO_THRESHOLD_QUANTILE,
                                   auto_threshold_margin=AUTO_THRESHOLD_MARGIN)
-        return mon, spectrum_mean, spectrum_n, had_row
+        return mon, spectrum_mean, spectrum_n, gate_hist, gate_boundary, had_row
 
     state = {
         "state": row["state"],
@@ -637,11 +830,11 @@ def load_monitor(sb, device_mac, classifier_fn, row=None):
         recent_exceedance_limit=None,
         auto_threshold_quantile=AUTO_THRESHOLD_QUANTILE,
         auto_threshold_margin=AUTO_THRESHOLD_MARGIN)
-    return mon, spectrum_mean, spectrum_n, had_row
+    return mon, spectrum_mean, spectrum_n, gate_hist, gate_boundary, had_row
 
 
 def save_monitor(sb, device_mac, mon, processed_at, spectrum_mean=None, spectrum_n=0,
-                 had_row=True):
+                 had_row=True, gate_hist=None, gate_boundary=None):
     # Recalibration race: the app's "Recalibrate" action (Devices.jsx) clears
     # a device's device_baselines row to force a fresh cold start. This
     # function runs at the end of a processing cycle and upserts whatever
@@ -681,6 +874,15 @@ def save_monitor(sb, device_mac, mon, processed_at, spectrum_mean=None, spectrum
         "min_baseline_span_seconds": baseline_span_seconds(device_mac),
         "baseline_spectrum_db": spectrum_mean.tolist() if spectrum_mean is not None else None,
         "spectrum_n": spectrum_n,
+        "gate_recent_db": list(gate_hist) if gate_hist is not None else None,
+        "gate_boundary_db": gate_boundary,
+        # Which rule decided this device's blower state, published for every
+        # other reader (the web app's Acoustic panel, the downloader's
+        # labelling). SHAPE_GATE_MACS stays the single authority; writing it
+        # here is what stops the other two copies drifting from it, which is
+        # how the app ended up labelling every P5 clip "Silent" while the
+        # pipeline scored the same audio as blower-on.
+        "gate_mode": "shape" if device_mac in SHAPE_GATE_MACS else "median",
         "last_processed_at": processed_at,
     }
     sb.table("device_baselines").upsert(payload, on_conflict="device_mac").execute()
@@ -688,7 +890,7 @@ def save_monitor(sb, device_mac, mon, processed_at, spectrum_mean=None, spectrum
 
 def process_device(sb, device_mac, storage_path, updated_at, classifier_fn,
                    baseline_row=None):
-    mon, spectrum_mean, spectrum_n, had_row = load_monitor(
+    mon, spectrum_mean, spectrum_n, gate_hist, gate_boundary, had_row = load_monitor(
         sb, device_mac, classifier_fn, row=baseline_row)
 
     # windSpeed is corroborating context only now -- not every device has
@@ -722,7 +924,9 @@ def process_device(sb, device_mac, storage_path, updated_at, classifier_fn,
         # reading. Same reasoning applies to the spectrum baseline, so
         # it's skipped here too.
         print(f"  {device_mac}: clip too short/silent -- marking processed, no verdict{wind_note}")
-        save_monitor(sb, device_mac, mon, updated_at, spectrum_mean, spectrum_n, had_row)
+        save_monitor(sb, device_mac, mon, updated_at, spectrum_mean, spectrum_n,
+                     had_row, gate_hist=gate_hist,
+                     gate_boundary=gate_boundary)
         return
 
     # Blower-off by spectral level (see SPECTRAL_GATE_ENABLED). Treated exactly
@@ -732,19 +936,39 @@ def process_device(sb, device_mac, storage_path, updated_at, classifier_fn,
     # a knock on the duct -- lifts the peak without the broadband hiss that
     # actually means air is moving.
     if spectral_gate_applies(device_mac):
-        gain_db = float(np.median(compute_spectrum(y, SR)))
-        if gain_db <= SPECTRAL_GATE_MIN_MEDIAN_DB:
-            print(f"  {device_mac}: blower off by spectral gain "
-                  f"({gain_db:+.1f} dB <= {SPECTRAL_GATE_MIN_MEDIAN_DB} dB) "
+        clip_spec = compute_spectrum(y, SR)
+        clip_median = float(np.median(np.asarray(clip_spec, dtype=float)))
+        on, gate_note, fresh_boundary = blower_is_on(clip_spec, spectrum_mean,
+                                                     spectrum_n, gate_hist, gate_boundary,
+                                                     y=y, sr=SR, device_mac=device_mac)
+        # Only a confident split replaces what the device already knows.
+        if fresh_boundary is not None and fresh_boundary != gate_boundary:
+            print(f"  {device_mac}: boundary updated "
+                  f"{'(first)' if gate_boundary is None else f'{gate_boundary:+.1f} ->'} "
+                  f"{fresh_boundary:+.1f} dB")
+            gate_boundary = fresh_boundary
+
+        # Appended whatever the verdict. This is the line that breaks the
+        # deadlock: the old relative rule could only ever learn from clips that
+        # had already passed, so a cut set too high could never be discovered.
+        gate_hist, kept = gate_threshold.push(gate_hist, clip_median)
+        if not kept:
+            print(f"  {device_mac}: gate median {clip_median:+.1f} dB not recorded "
+                  f"(dead signal path, not a quiet room)")
+
+        if not on:
+            print(f"  {device_mac}: blower off ({gate_note}) "
                   f"-- marking processed, no verdict{wind_note}")
             # Clear BEFORE save_monitor: save_monitor stamps last_processed_at,
             # which is the flag the firmware polls to learn the verdict is in.
             # Writing the burst state first guarantees the device never reads a
             # fresh last_processed_at alongside a stale interval.
             set_blower_burst(sb, device_mac, False)
-            save_monitor(sb, device_mac, mon, updated_at, spectrum_mean, spectrum_n, had_row)
+            save_monitor(sb, device_mac, mon, updated_at, spectrum_mean, spectrum_n,
+                     had_row, gate_hist=gate_hist,
+                     gate_boundary=gate_boundary)
             return
-        print(f"  {device_mac}: blower on by spectral gain ({gain_db:+.1f} dB)")
+        print(f"  {device_mac}: blower on ({gate_note})")
         set_blower_burst(sb, device_mac, True)
 
     # The audio's own upload time, not now(): warmup span must reflect when
@@ -828,7 +1052,8 @@ def process_device(sb, device_mac, storage_path, updated_at, classifier_fn,
     this_bucket = int(reading_epoch // 3600) // ADAPTIVE_UPDATE_HOURS
     prev_bucket = (int(prev_reading_at // 3600) // ADAPTIVE_UPDATE_HOURS
                    if prev_reading_at is not None else None)
-    if (ADAPTIVE_THRESHOLD and mon_state.get("state") == "warm"
+    if (ADAPTIVE_THRESHOLD and device_mac not in ADAPTIVE_THRESHOLD_EXCLUDE_MACS
+            and mon_state.get("state") == "warm"
             and prev_bucket is not None and this_bucket != prev_bucket):
         adapted = adaptive_threshold(sb, device_mac, mon, mon_state, updated_at)
         if adapted:
@@ -836,12 +1061,24 @@ def process_device(sb, device_mac, storage_path, updated_at, classifier_fn,
             mon.set_drift_threshold(new_thr)
             mon_state = mon.get_state()
             clamp_note = ""
+            at_ceiling = False
             if abs(new_thr - raw) > 1e-9:
-                clamp_note = (f", clamped from {raw:.2f} "
-                              f"(anchor {anchor:.2f}, band "
+                at_ceiling = raw > anchor * ADAPTIVE_MAX_RISE
+                clamp_note = (f", clamped {'DOWN from the ceiling' if at_ceiling else 'up from the floor'}"
+                              f" ({raw:.2f} -> {new_thr:.2f}, anchor {anchor:.2f}, band "
                               f"{anchor*ADAPTIVE_MIN_FALL:.2f}-{anchor*ADAPTIVE_MAX_RISE:.2f})")
             print(f"  {device_mac}: threshold -> {new_thr:.3f} "
                   f"from p{ADAPTIVE_PERCENTILE} of {n_clean} clean readings{clamp_note}")
+            # Sitting at the ceiling is not routine. It means this device's own
+            # readings are drifting upward faster than the model allows for,
+            # and the clamp -- not the data -- is deciding its threshold. On a
+            # filter monitor that is the signature of a filter loading, so it
+            # should be visible without reading back through the log.
+            if at_ceiling:
+                print(f"  !! {device_mac}: threshold PINNED AT ITS CEILING "
+                      f"({anchor * ADAPTIVE_MAX_RISE:.2f}). Its readings want "
+                      f"{raw:.2f}. Adaptation is no longer tracking this device "
+                      f"-- check whether the filter is loading.")
 
     # If this reading is the one that tips the baseline over its freeze gates,
     # the monitor derives the device's threshold from the calibration samples
@@ -867,6 +1104,20 @@ def process_device(sb, device_mac, storage_path, updated_at, classifier_fn,
                  else f" (n={td['n_samples']}, d={td['n_features']})"))
         mon.threshold_detail = None
     verdict = result["decision"]
+
+    # Side-by-side experiment (see shadow_mfcc.py): the same clip scored on the
+    # LoRa firmware's MFCCs. It never touches the verdict, and any failure in it
+    # costs only its own CSV row -- never this reading.
+    try:
+        shadow_note = shadow_mfcc.score(
+            device_mac, y, isoparse(updated_at).timestamp(), mon.get_state(), result,
+            ewma_alpha=EWMA_ALPHA, patience=PATIENCE,
+            window_readings=RECENT_WINDOW_READINGS, window_min=RECENT_WINDOW_MIN,
+            dirty_fraction=RECENT_DIRTY_FRACTION, dirty_min=RECENT_DIRTY_MIN)
+        if shadow_note:
+            print(f"  {device_mac}: {shadow_note}")
+    except Exception as e:
+        print(f"  {device_mac}: shadow MFCC failed ({type(e).__name__}: {e}) -- verdict unaffected")
 
     # Mirrors FilterHealthMonitor's own warmup rule (drift_detector.py):
     # the filter is assumed clean for the whole warmup window, so every
@@ -922,7 +1173,9 @@ def process_device(sb, device_mac, storage_path, updated_at, classifier_fn,
     # Nothing reads those two columns -- the app takes verdicts from
     # filter_ml_readings (web/src/lib/audioRecordings.js) -- so the write is
     # simply removed rather than reworked.
-    save_monitor(sb, device_mac, mon, updated_at, spectrum_mean, spectrum_n, had_row)
+    save_monitor(sb, device_mac, mon, updated_at, spectrum_mean, spectrum_n,
+                     had_row, gate_hist=gate_hist,
+                     gate_boundary=gate_boundary)
 
 
 def run_once(sb, classifier_fn):

@@ -107,11 +107,35 @@ def main():
     print(f"\nRecalibrating {len(targets)} device(s)...")
     for d in targets:
         mac = d["device_mac"]
+
+        # gate_recent_db records how loud this device's own clips are, which is
+        # a property of the microphone and the room -- not of the filter fitted.
+        # Recalibrating must not throw it away.
+        #
+        # Deleting it is a ONE-WAY TRIP for any device whose levels sit below
+        # the fleet-wide absolute cut: no history -> no learned boundary -> the
+        # absolute cut decides -> nothing passes the gate -> no history. P3 fell
+        # into exactly that on 2026-09-24, when a recalibration cleared its 528
+        # reference clips and left it discarding 82 consecutive wakes as silent
+        # while its blower was audibly running.
+        prev = (sb.table("device_baselines").select("gate_recent_db")
+                .eq("device_mac", mac).maybe_single().execute())
+        gate_hist = ((prev.data or {}).get("gate_recent_db") if prev else None) or []
+
         # Stamp first: a device with no baseline row yet still needs sampling
         # mode, so this must not depend on the delete matching anything.
         sb.table("devices").update({"calibration_started_at": now_iso}).eq("device_mac", mac).execute()
         sb.table("device_baselines").delete().eq("device_mac", mac).execute()
-        print(f"  {mac}: baseline cleared, sampling mode on")
+
+        # Re-seed the history only. baseline_mean stays NULL, so load_monitor
+        # still cold-starts the drift baseline exactly as before: the device
+        # relearns what a clean filter sounds like while keeping what it already
+        # knows about its own loudness.
+        if gate_hist:
+            sb.table("device_baselines").insert(
+                {"device_mac": mac, "gate_recent_db": gate_hist}).execute()
+        print(f"  {mac}: baseline cleared, sampling mode on"
+              + (f" (kept {len(gate_hist)} gate medians)" if gate_hist else ""))
 
     # Verify rather than trust: the poller upserts baselines continuously, and
     # a delete landing mid-cycle used to get resurrected by it (poll_and_infer

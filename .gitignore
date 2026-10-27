@@ -13,3 +13,9 @@ backups/
 caldata/
 # Logs appended live by the experiment collectors
 service/*.csv
+# Poller/bridge logs (tens of MB, rewritten continuously) and shadow_mfcc state
+logs/
+
+# LoRaWAN AppKeys (root keys) and the sketches generated from them
+firmware/lora_keys.json
+firmware/lora_nodes/

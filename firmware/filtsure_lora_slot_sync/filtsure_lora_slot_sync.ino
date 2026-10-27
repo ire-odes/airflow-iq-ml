@@ -137,11 +137,14 @@
  * symptom that is hardest to attribute, because each node looks fine on
  * its own and fails only when the other happens to join.
  *
- * Register each node separately in the TTN console and paste its own
- * devEUI + appKey here before flashing it.
+ * Do not flash this file directly. firmware/make_lora_nodes.py replaces this
+ * whole block with each node's own DevEUI and AppKey (from the gitignored
+ * firmware/lora_keys.json) and writes firmware/lora_nodes/<NODE>/. Flash those.
  */
+#error "Base sketch: flash a generated sketch from firmware/lora_nodes/ (run firmware/make_lora_nodes.py)."
+
 uint64_t joinEUI = 0x0000000000000000;
-uint64_t devEUI  = 0x70B3D57ED007772D;   // <-- P9 (blower). P4 needs ITS OWN value.
+uint64_t devEUI  = 0x0000000000000000;
 uint8_t  appKey[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 uint8_t  nwkKey[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 
